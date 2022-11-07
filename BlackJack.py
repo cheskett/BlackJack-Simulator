@@ -3,13 +3,15 @@ from random import shuffle
 
 import numpy as np
 import scipy.stats as stats
-import pylab as pl
-import matplotlib.pyplot as plt
+import threading
+# import pylab as pl
+# import matplotlib.pyplot as plt
 
 from importer.StrategyImporter import StrategyImporter
 
+NUM_THREADS=20
 
-GAMES = 20000
+GAMES = 10000
 SHOE_SIZE = 6
 SHOE_PENETRATION = 0.25
 BET_SPREAD = 20.0
@@ -17,6 +19,7 @@ BET_SPREAD = 20.0
 DECK_SIZE = 52.0
 CARDS = {"Ace": 11, "Two": 2, "Three": 3, "Four": 4, "Five": 5, "Six": 6, "Seven": 7, "Eight": 8, "Nine": 9, "Ten": 10, "Jack": 10, "Queen": 10, "King": 10}
 BASIC_OMEGA_II = {"Ace": 0, "Two": 1, "Three": 1, "Four": 2, "Five": 2, "Six": 2, "Seven": 1, "Eight": 0, "Nine": -1, "Ten": -2, "Jack": -2, "Queen": -2, "King": -2}
+HI_LOW = {"Ace": -1, "Two": 1, "Three": 1, "Four": 1, "Five": 1, "Six": 1, "Seven": 0, "Eight": 0, "Nine": 0, "Ten": -1, "Jack": -1, "Queen": -1, "King": -1}
 
 BLACKJACK_RULES = {
     'triple7': False,  # Count 3x7 as a blackjack
@@ -25,7 +28,6 @@ BLACKJACK_RULES = {
 HARD_STRATEGY = {}
 SOFT_STRATEGY = {}
 PAIR_STRATEGY = {}
-
 
 class Card(object):
     """
@@ -101,7 +103,8 @@ class Shoe(object):
         """
         Add the dealt card to current count.
         """
-        self.count += BASIC_OMEGA_II[card.name]
+        # self.count += BASIC_OMEGA_II[card.name]
+        self.count += HI_LOW[card.name]
         self.count_history.append(self.truecount())
 
     def truecount(self):
@@ -453,6 +456,24 @@ class Game(object):
         return self.bet
 
 
+def threadPlay(tid, rounds, moneys, bets, countings, nb_hands, lock):
+    for i in range(rounds):
+        game = Game()
+        hands = 0
+        while not game.shoe.reshuffle:
+            game.play_round()
+            hands += 1
+        
+        print("WIN for Game no. %d-%d: %s (%s bet)" % (tid, i + 1, "{0:.2f}".format(game.get_money()), "{0:.2f}".format(game.get_bet())))
+        with lock:
+            nb_hands[0] += hands
+            moneys.append(game.get_money())
+            bets.append(game.get_bet())
+            countings += game.shoe.count_history
+
+    print("THREAD EXIT {}!".format(tid))
+
+
 if __name__ == "__main__":
     importer = StrategyImporter(sys.argv[1])
     HARD_STRATEGY, SOFT_STRATEGY, PAIR_STRATEGY = importer.import_player_strategy()
@@ -460,19 +481,28 @@ if __name__ == "__main__":
     moneys = []
     bets = []
     countings = []
-    nb_hands = 0
-    for g in range(GAMES):
-        game = Game()
-        while not game.shoe.reshuffle:
-            # print '%s GAME no. %d %s' % (20 * '#', i + 1, 20 * '#')
-            game.play_round()
-            nb_hands += 1
+    nb_hands = [0]
+    lock = threading.Lock()
+    workers = []
+    for tid in range(NUM_THREADS):
+        w = threading.Thread(target=threadPlay, args=(tid, GAMES//NUM_THREADS, moneys, bets, countings, nb_hands, lock))
+        workers.append(w)
+        w.start()
 
-        moneys.append(game.get_money())
-        bets.append(game.get_bet())
-        countings += game.shoe.count_history
+    for w in workers:
+        w.join()
+    # for g in range(GAMES):
+        # game = Game()
+        # while not game.shoe.reshuffle:
+        #     # print '%s GAME no. %d %s' % (20 * '#', i + 1, 20 * '#')
+        #     game.play_round()
+        #     nb_hands[0] += 1
 
-        print("WIN for Game no. %d: %s (%s bet)" % (g + 1, "{0:.2f}".format(game.get_money()), "{0:.2f}".format(game.get_bet())))
+        # moneys.append(game.get_money())
+        # bets.append(game.get_bet())
+        # countings += game.shoe.count_history
+
+        # print("WIN for Game no. %d: %s (%s bet)" % (g + 1, "{0:.2f}".format(game.get_money()), "{0:.2f}".format(game.get_bet())))
 
     sume = 0.0
     total_bet = 0.0
@@ -481,17 +511,18 @@ if __name__ == "__main__":
     for value in bets:
         total_bet += value
 
-    print "\n%d hands overall, %0.2f hands per game on average" % (nb_hands, float(nb_hands) / GAMES)
-    print "%0.2f total bet" % total_bet
+    print ("\n%d hands overall, %0.2f hands per game on average" % (nb_hands[0], float(nb_hands[0]) / GAMES))
+    print ("%0.2f total bet" % total_bet)
     print("Overall winnings: {} (edge = {} %)".format("{0:.2f}".format(sume), "{0:.3f}".format(100.0*sume/total_bet)))
 
-    moneys = sorted(moneys)
-    fit = stats.norm.pdf(moneys, np.mean(moneys), np.std(moneys))  # this is a fitting indeed
-    pl.plot(moneys, fit, '-o')
-    pl.hist(moneys, normed=True)
-    pl.show()
+    # moneys = sorted(moneys)
+    # print(moneys)
+    #fit = stats.norm.pdf(moneys, np.mean(moneys), np.std(moneys))  # this is a fitting indeed
+    #pl.plot(moneys, fit, '-o')
+    #pl.hist(moneys, normed=True)
+    #pl.show()
 
-    plt.ylabel('count')
-    plt.plot(countings, label='x')
-    plt.legend()
-    plt.show()
+    #plt.ylabel('count')
+    #plt.plot(countings, label='x')
+    #plt.legend()
+    #plt.show()
